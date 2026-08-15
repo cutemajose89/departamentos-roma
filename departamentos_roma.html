@@ -400,6 +400,10 @@
         <input id="f-rooms" type="text" placeholder="Ej. 3">
       </div>
       <div>
+        <label for="f-m2" data-i18n="lblM2">Metros cuadrados</label>
+        <input id="f-m2" type="text" placeholder="Ej. 100">
+      </div>
+      <div>
         <label for="f-link" data-i18n="lblLink">Enlace del anuncio</label>
         <input id="f-link" type="text" placeholder="https://...">
       </div>
@@ -470,6 +474,7 @@ const I18N = {
     lblZona: 'Barrio (rione)',
     lblPrice: 'Precio mensual (€)',
     lblRooms: 'Recámaras',
+    lblM2: 'Metros cuadrados',
     lblLink: 'Enlace del anuncio',
     lblNotes: 'Notas',
     btnCancel: 'Cancelar',
@@ -511,6 +516,7 @@ const I18N = {
     lblZona: 'Quartiere (rione)',
     lblPrice: 'Prezzo mensile (€)',
     lblRooms: 'Camere da letto',
+    lblM2: 'Metri quadrati',
     lblLink: 'Link dell\'annuncio',
     lblNotes: 'Note',
     btnCancel: 'Annulla',
@@ -621,6 +627,7 @@ function recordToListing(rec){
     zona: f['Barrio'] || '',
     price: f['Precio'] != null ? String(f['Precio']) : '',
     rooms: f['Recámaras'] != null ? String(f['Recámaras']) : '',
+    m2: f['m2'] != null ? String(f['m2']) : '',
     link: f['Enlace'] || '',
     notes: f['Notas'] || '',
     notes_it: f['Notas_IT'] || '',
@@ -639,6 +646,8 @@ function listingToFields(entry){
   if(!isNaN(price)) fields['Precio'] = price;
   const rooms = parseInt(entry.rooms, 10);
   if(!isNaN(rooms)) fields['Recámaras'] = rooms;
+  const m2 = parseInt(entry.m2, 10);
+  if(!isNaN(m2)) fields['m2'] = m2;
   if(entry.notes_it) fields['Notas_IT'] = entry.notes_it;
   return fields;
 }
@@ -835,6 +844,8 @@ function render(){
     const priceRaw = (l.price||'').toString().trim();
     const price = priceRaw ? (priceRaw.match(/€/) ? priceRaw : '€ ' + priceRaw + t('perMonth')) : t('priceUnset');
     const rooms = l.rooms ? escapeHtml(l.rooms) + ' ' + t('rooms') : '';
+    const m2 = l.m2 ? escapeHtml(l.m2) + ' m²' : '';
+    const meta = [rooms, m2].filter(Boolean).join(' · ');
     const link = l.link ? escapeHtml(l.link) : '';
     const isTranslating = currentLang === 'it' && l.notes && !l.notes_it;
     const notes = escapeHtml(currentLang === 'it' ? (l.notes_it || l.notes || '') : (l.notes || ''));
@@ -849,7 +860,7 @@ function render(){
             <div class="addr">${addr}</div>
             <div class="price">${escapeHtml(price)}</div>
           </div>
-          ${rooms ? `<div class="meta">${rooms}</div>` : ''}
+          ${meta ? `<div class="meta">${meta}</div>` : ''}
           ${notes ? `<div class="notes">${notes}${isTranslating ? ' <span style="opacity:0.5;font-style:normal;">(…)</span>' : ''}</div>` : ''}
           <div class="row-actions">
             ${link ? `<a class="link" href="${link}" target="_blank" rel="noopener">${t('viewListing')}</a>` : `<span class="link" style="opacity:0.4;cursor:default;border:none;">${t('noLink')}</span>`}
@@ -879,6 +890,7 @@ function startEdit(id){
   document.getElementById('f-zona').value = l.zona || '';
   document.getElementById('f-price').value = l.price || '';
   document.getElementById('f-rooms').value = l.rooms || '';
+  document.getElementById('f-m2').value = l.m2 || '';
   document.getElementById('f-link').value = l.link || '';
   document.getElementById('f-notes').value = l.notes || '';
   document.getElementById('saveBtn').textContent = t('btnSaveEdit');
@@ -895,6 +907,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     zona: document.getElementById('f-zona').value.trim(),
     price: document.getElementById('f-price').value.trim(),
     rooms: document.getElementById('f-rooms').value.trim(),
+    m2: document.getElementById('f-m2').value.trim(),
     link: document.getElementById('f-link').value.trim(),
     notes: document.getElementById('f-notes').value.trim(),
   };
@@ -908,12 +921,12 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     await addListing(fields);
   }
   btn.disabled = false;
-  ['f-addr','f-zona','f-price','f-rooms','f-link','f-notes'].forEach(id=> document.getElementById(id).value='');
+  ['f-addr','f-zona','f-price','f-rooms','f-m2','f-link','f-notes'].forEach(id=> document.getElementById(id).value='');
   document.getElementById('addCard').open = false;
 });
 
 document.getElementById('cancelBtn').addEventListener('click', ()=>{
-  ['f-addr','f-zona','f-price','f-rooms','f-link','f-notes'].forEach(id=> document.getElementById(id).value='');
+  ['f-addr','f-zona','f-price','f-rooms','f-m2','f-link','f-notes'].forEach(id=> document.getElementById(id).value='');
   document.getElementById('addCard').open = false;
   editingId = null;
   document.getElementById('saveBtn').textContent = t('btnSave');
