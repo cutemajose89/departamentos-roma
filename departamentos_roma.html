@@ -414,6 +414,14 @@
     </div>
   </details>
 
+  <div class="add-card" style="margin-bottom:20px;">
+    <div style="font-family:'Cinzel', serif; font-size:13px; letter-spacing:0.14em; text-transform:uppercase; color:var(--brass); margin-bottom:14px;" data-i18n="zonasTitle">Zonas de interés</div>
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <input id="f-zona-nueva" type="text" placeholder="Ej. Monti, Prati..." style="flex:1;">
+      <button class="btn-primary" type="button" id="addZonaBtn" data-i18n="btnAddZona">Agregar</button>
+    </div>    <div id="zonasList" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+  </div>
+
   <div class="toolbar">
     <span class="count"><span data-i18n="countLabel">Opciones guardadas</span>: <strong id="countNum">0</strong></span>
     <select id="sortSel">
@@ -436,6 +444,8 @@ const AIRTABLE_BASE_ID = 'appOBaJZk0WVkjg9s';
 const AIRTABLE_TABLE = 'Departamentos';
 const AIRTABLE_TOKEN = 'patOSEVShsQRTAMiD.b74ad8faf8ea2e90f948f80464333084b02b92703cc6637d99b1303f9214e6a6';
 const AIRTABLE_URL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE)}`;
+const AIRTABLE_ZONAS_TABLE = 'Zonas';
+const AIRTABLE_ZONAS_URL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_ZONAS_TABLE)}`;
 
 function airtableHeaders(){
   return {
@@ -486,6 +496,11 @@ const I18N = {
     errSave: 'No se pudo guardar. Intenta de nuevo.',
     errLoad: 'No se pudo cargar. Revisa tu conexión.',
     langBtn: 'Italiano',
+    zonasTitle: 'Zonas de interés',
+    btnAddZona: 'Agregar',
+    zonaRemove: 'quitar',
+    errZonaEmpty: 'Escribe un nombre de barrio.',
+    zonaAdded: 'Zona agregada.',
   },
   it: {
     eyebrow: 'Roma · Lesbian Luck Immobiliare',
@@ -522,6 +537,11 @@ const I18N = {
     errSave: 'Impossibile salvare. Riprova.',
     errLoad: 'Impossibile caricare. Controlla la connessione.',
     langBtn: 'Español',
+    zonasTitle: 'Zone di interesse',
+    btnAddZona: 'Aggiungi',
+    zonaRemove: 'rimuovi',
+    errZonaEmpty: 'Scrivi il nome di un quartiere.',
+    zonaAdded: 'Zona aggiunta.',
   }
 };
 
@@ -541,6 +561,7 @@ document.getElementById('langToggle').addEventListener('click', ()=>{
   currentLang = currentLang === 'es' ? 'it' : 'es';
   applyStaticTranslations();
   render();
+  renderZonas();
   if(currentLang === 'it'){
     listings.filter(l => l.notes && !l.notes_it).forEach(l => translateAndUpdate(l.id, l.notes));
   }
@@ -639,12 +660,65 @@ async function loadListings(){
       offset = data.offset;
     } while(offset);
     listings = all;
+
+    if(listings.length === 0){
+      await seedPreviousListings();
+    }
   }catch(e){
     setStatus(t('errLoad'), true);
     listings = [];
   }
   document.getElementById('loadingState').style.display = 'none';
   render();
+}
+
+// One-time migration: re-adds the 4 listings previously confirmed and saved
+// in the earlier (non-Airtable) version of the catasto, so nothing gets lost.
+async function seedPreviousListings(){
+  const pending = [
+    {
+      addr: 'Piazza Pasquale Paoli',
+      zona: 'Via Giulia',
+      price: '3000',
+      rooms: '3',
+      link: 'https://www.immobiliare.it/annunci/114914353/',
+      notes: 'Quadrilocale a un paso de Via Giulia, mismo entorno del centro histórico.',
+      notes_it: 'Quadrilocale a un passo da Via Giulia, stesso contesto del centro storico.',
+    },
+    {
+      addr: 'Via Giulia',
+      zona: 'Centro Storico',
+      price: '2200',
+      rooms: '3',
+      link: 'https://www.immobiliare.it/en/annunci/131501434/',
+      notes: 'Favorito. 3 habitaciones (una tipo estudio), edificio sin ascensor, junto al Tíber.',
+      notes_it: 'Preferito. 3 camere (una tipo studio), edificio senza ascensore, vicino al Tevere.',
+    },
+    {
+      addr: 'Piazza di San Egidio',
+      zona: 'Trastevere',
+      price: '2600',
+      rooms: '2',
+      link: 'https://www.idealista.it/immobile/19278529/',
+      notes: '120 m², elegantemente renovado, en una de las plazas más bonitas de Trastevere.',
+      notes_it: '120 m², elegantemente ristrutturato, in una delle piazze più belle di Trastevere.',
+    },
+    {
+      addr: 'Via Giulia',
+      zona: "Campo de' Fiori",
+      price: '2600',
+      rooms: '2',
+      link: 'https://www.idealista.it/immobile/36167114/',
+      notes: '100 m², 2do piso con ascensor, vistas a Piazza delle Moretta recién restaurada.',
+      notes_it: '100 m², 2° piano con ascensore, vista su Piazza delle Moretta appena restaurata.',
+    },
+  ];
+  for(const item of pending){
+    try{
+      const created = await createListing(item);
+      listings.unshift(created);
+    }catch(e){ /* skip on failure, keep going with the rest */ }
+  }
 }
 
 async function createListing(entry){
@@ -848,8 +922,84 @@ document.getElementById('cancelBtn').addEventListener('click', ()=>{
 document.getElementById('sortSel').addEventListener('change', render);
 
 /* ====================== Init ====================== */
+/* ====================== Zonas de interés ====================== */
+let zonas = []; // [{id, nombre}]
+
+async function loadZonas(){
+  try{
+    let all = [];
+    let offset = null;
+    do {
+      const url = new URL(AIRTABLE_ZONAS_URL);
+      url.searchParams.set('pageSize', '100');
+      if(offset) url.searchParams.set('offset', offset);
+      const res = await fetch(url.toString(), { headers: airtableHeaders() });
+      if(!res.ok) throw new Error('Zonas fetch failed: ' + res.status);
+      const data = await res.json();
+      all = all.concat((data.records || []).map(r => ({ id: r.id, nombre: (r.fields||{})['Barrio'] || '' })));
+      offset = data.offset;
+    } while(offset);
+    zonas = all;
+  }catch(e){
+    zonas = [];
+  }
+  renderZonas();
+}
+
+function renderZonas(){
+  const wrap = document.getElementById('zonasList');
+  wrap.innerHTML = zonas.map(z => `
+    <span style="display:inline-flex; align-items:center; gap:8px; background:var(--charcoal); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink);">
+      ${escapeHtml(z.nombre)}
+      <button data-zona-id="${z.id}" style="background:none;border:none;color:var(--ink-dim);cursor:pointer;font-size:11px;padding:0;" title="${t('zonaRemove')}">✕</button>
+    </span>
+  `).join('');
+  wrap.querySelectorAll('[data-zona-id]').forEach(btn=>{
+    btn.addEventListener('click', ()=> removeZona(btn.dataset.zonaId));
+  });
+}
+
+async function addZona(nombre){
+  try{
+    const res = await fetch(AIRTABLE_ZONAS_URL, {
+      method: 'POST',
+      headers: airtableHeaders(),
+      body: JSON.stringify({ fields: { 'Barrio': nombre } })
+    });
+    if(!res.ok) throw new Error('Zona create failed: ' + res.status);
+    const rec = await res.json();
+    zonas.push({ id: rec.id, nombre });
+    renderZonas();
+    setStatus(t('zonaAdded'));
+  }catch(e){
+    setStatus(t('errSave'), true);
+  }
+}
+
+async function removeZona(id){
+  try{
+    await fetch(`${AIRTABLE_ZONAS_URL}/${id}`, { method: 'DELETE', headers: airtableHeaders() });
+    zonas = zonas.filter(z => z.id !== id);
+    renderZonas();
+  }catch(e){
+    setStatus(t('errSave'), true);
+  }
+}
+
+document.getElementById('addZonaBtn').addEventListener('click', ()=>{
+  const input = document.getElementById('f-zona-nueva');
+  const val = input.value.trim();
+  if(!val){ setStatus(t('errZonaEmpty'), true); return; }
+  addZona(val);
+  input.value = '';
+});
+document.getElementById('f-zona-nueva').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){ document.getElementById('addZonaBtn').click(); }
+});
+
 applyStaticTranslations();
 loadListings();
+loadZonas();
 </script>
 </body>
 </html>
