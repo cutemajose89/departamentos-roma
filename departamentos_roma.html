@@ -507,7 +507,7 @@ const I18N = {
     rooms: 'rec.',
     savedMsg: 'Guardado.',
     editedMsg: 'Cambios guardados.',
-    removedMsg: 'Eliminado.',
+    removedMsg: 'Descartado.',
     errAddr: 'Escribe al menos una dirección o nombre.',
     errSave: 'No se pudo guardar. Intenta de nuevo.',
     errLoad: 'No se pudo cargar. Revisa tu conexión.',
@@ -556,7 +556,7 @@ const I18N = {
     rooms: 'cam.',
     savedMsg: 'Salvato.',
     editedMsg: 'Modifiche salvate.',
-    removedMsg: 'Eliminato.',
+    removedMsg: 'Scartato.',
     errAddr: 'Scrivi almeno un indirizzo o un nome.',
     errSave: 'Impossibile salvare. Riprova.',
     errLoad: 'Impossibile caricare. Controlla la connessione.',
@@ -707,6 +707,9 @@ function recordToListing(rec){
     link: f['Enlace'] || '',
     notes: f['Notas'] || '',
     notes_it: f['Notas_IT'] || '',
+    estado: f['Estado'] || 'Guardado',
+    visto: !!f['Visto'],
+    calificacion: f['Calificación'] || 0,
     addedAt: rec.createdTime ? new Date(rec.createdTime).getTime() : Date.now(),
   };
 }
@@ -725,6 +728,7 @@ function listingToFields(entry){
   const m2 = parseInt(entry.m2, 10);
   if(!isNaN(m2)) fields['m2'] = m2;
   if(entry.notes_it) fields['Notas_IT'] = entry.notes_it;
+  if(entry.estado) fields['Estado'] = entry.estado;
   return fields;
 }
 
@@ -864,10 +868,46 @@ async function editListing(id, entry){
 
 async function removeListing(id){
   try{
-    await deleteListingRemote(id);
-    listings = listings.filter(l => l.id !== id);
+    const res = await fetch(`${AIRTABLE_URL}/${id}`, {
+      method: 'PATCH',
+      headers: airtableHeaders(),
+      body: JSON.stringify({ fields: { 'Estado': 'Descartado' } })
+    });
+    if(!res.ok) throw new Error('Airtable update failed: ' + res.status);
+    const idx = listings.findIndex(l => l.id === id);
+    if(idx>-1) listings[idx].estado = 'Descartado';
     render();
     setStatus(t('removedMsg'));
+  }catch(e){
+    setStatus(t('errSave'), true);
+  }
+}
+
+async function markSeen(id){
+  const l = listings.find(x=>x.id===id);
+  if(!l || l.visto) return;
+  l.visto = true;
+  render();
+  try{
+    await fetch(`${AIRTABLE_URL}/${id}`, {
+      method: 'PATCH',
+      headers: airtableHeaders(),
+      body: JSON.stringify({ fields: { 'Visto': true } })
+    });
+  }catch(e){ /* will retry visually next render, non-critical */ }
+}
+
+async function rateListing(id, stars){
+  const idx = listings.findIndex(x=>x.id===id);
+  if(idx===-1) return;
+  listings[idx].calificacion = stars;
+  render();
+  try{
+    await fetch(`${AIRTABLE_URL}/${id}`, {
+      method: 'PATCH',
+      headers: airtableHeaders(),
+      body: JSON.stringify({ fields: { 'Calificación': stars } })
+    });
   }catch(e){
     setStatus(t('errSave'), true);
   }
@@ -895,9 +935,10 @@ function render(){
   const grid = document.getElementById('grid');
   const empty = document.getElementById('emptyState');
   const countNum = document.getElementById('countNum');
-  countNum.textContent = listings.length;
+  const visibleListings = listings.filter(l => l.estado !== 'Descartado');
+  countNum.textContent = visibleListings.length;
 
-  if(listings.length === 0){
+  if(visibleListings.length === 0){
     grid.innerHTML = '';
     empty.style.display = 'block';
     return;
@@ -905,11 +946,14 @@ function render(){
   empty.style.display = 'none';
 
   const sortVal = document.getElementById('sortSel').value;
-  let items = [...listings];
+  let items = [...visibleListings];
   if(sortVal === 'price-asc'){
     items.sort((a,b)=> (parsePrice(a.price)||Infinity) - (parsePrice(b.price)||Infinity));
   } else if(sortVal === 'price-desc'){
     items.sort((a,b)=> (parsePrice(b.price)||-Infinity) - (parsePrice(a.price)||-Infinity));
+  } else if(sortVal === 'only-new'){
+    items = items.filter(l => !l.visto);
+    items.sort((a,b)=> (b.addedAt||0) - (a.addedAt||0));
   } else {
     items.sort((a,b)=> (b.addedAt||0) - (a.addedAt||0));
   }
@@ -925,9 +969,10 @@ function render(){
     const link = l.link ? escapeHtml(l.link) : '';
     const isTranslating = currentLang === 'it' && l.notes && !l.notes_it;
     const notes = escapeHtml(currentLang === 'it' ? (l.notes_it || l.notes || '') : (l.notes || ''));
-    const isNew = l.addedAt && (Date.now() - l.addedAt) < (48 * 60 * 60 * 1000);
+    const isNew = !l.visto;
+    const stars = [1,2,3,4,5].map(n => `<span data-star="${n}" data-rate-id="${l.id}" style="cursor:pointer; font-size:16px; color:${n <= (l.calificacion||0) ? 'var(--brass)' : 'var(--line)'};">★</span>`).join('');
     return `
-      <div class="card">
+      <div class="card" data-card-id="${l.id}">
         <div class="plaque">
           <div class="rione">${t('rione')}</div>
           <div class="zona">${zona}</div>
@@ -946,6 +991,7 @@ function render(){
               <button class="remove" data-id="${l.id}">${t('remove')}</button>
             </span>
           </div>
+          <div style="display:flex; gap:3px; margin-top:2px;">${stars}</div>
         </div>
       </div>
     `;
@@ -957,6 +1003,29 @@ function render(){
   grid.querySelectorAll('.remove[data-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=> startEdit(btn.dataset.edit));
   });
+  grid.querySelectorAll('[data-rate-id]').forEach(el=>{
+    el.addEventListener('click', ()=> rateListing(el.dataset.rateId, parseInt(el.dataset.star,10)));
+  });
+
+  observeCardsForSeen();
+}
+
+function observeCardsForSeen(){
+  if(!('IntersectionObserver' in window)) {
+    // fallback: mark everything currently rendered as seen
+    listings.forEach(l => { if(!l.visto) markSeen(l.id); });
+    return;
+  }
+  const obs = new IntersectionObserver((entries)=>{
+    entries.forEach(entry=>{
+      if(entry.isIntersecting){
+        const id = entry.target.dataset.cardId;
+        markSeen(id);
+        obs.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.4 });
+  document.querySelectorAll('[data-card-id]').forEach(card => obs.observe(card));
 }
 
 function startEdit(id){
